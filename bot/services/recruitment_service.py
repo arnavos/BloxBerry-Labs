@@ -353,6 +353,14 @@ class RecruitmentService:
                 record["reviewed_at"] = datetime.now(UTC).isoformat()
                 await self.state_store.save()
 
+        # Update the main panel embed to reflect the newly assigned seat
+        if decision == "accept" and record.get("type") == "main":
+            from bot.views.recruitment import MainPanelView
+
+            panel_svc = getattr(interaction.client, "panel_service", None)
+            if panel_svc is not None:
+                panel_svc.schedule_main_panel_refresh(MainPanelView)
+
         # Staff review embeds keep role mentions; applicant DMs use plain role names.
         mentions = "\n".join(f"• <@&{rid}>" for rid in role_ids)
         role_names_text = "\n".join(f"• **{name}**" for name in record.get("role_names", []))

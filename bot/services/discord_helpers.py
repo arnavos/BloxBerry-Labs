@@ -57,18 +57,20 @@ def is_ticket_staff_authorized(
 
 
 def count_members_with_role(guild: discord.Guild, role_id: int) -> int:
-    """Count cached guild members holding the specified role ID."""
+    """Count cached human guild members holding the specified role ID."""
     role = guild.get_role(role_id)
     if role is None:
         return 0
-    return sum(1 for member in guild.members if role in member.roles)
+    return sum(
+        1 for member in guild.members if not getattr(member, "bot", False) and role in member.roles
+    )
 
 
 def count_members_for_roles(
     guild: discord.Guild,
     role_ids: Iterable[int],
 ) -> dict[int, int]:
-    """Count cached guild members for multiple role IDs in a single pass."""
+    """Count cached human guild members for multiple role IDs in a single pass."""
     valid_ids: set[int] = set()
     counts: dict[int, int] = {}
     for rid in role_ids:
@@ -80,6 +82,8 @@ def count_members_for_roles(
         return counts
 
     for member in guild.members:
+        if getattr(member, "bot", False):
+            continue
         for role in member.roles:
             if role.id in valid_ids:
                 counts[role.id] += 1

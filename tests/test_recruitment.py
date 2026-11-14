@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import discord
 
 from bot.client import BloxBerryBot
 from bot.config import MAIN_ROLES
+from bot.services.panel_service import build_main_recruitment_embed
 from bot.services.recruitment_service import ApplicationAnswers
 from bot.views import (
     ApplicationReviewedView,
@@ -137,6 +139,116 @@ async def test_recruitment_submit_and_accept_flow_fixes_newlines(
     assert "\\n" not in edited_embed.description
     assert "🟢 ACCEPTED" in edited_embed.description
     assert bot_instance.has_pending_application(3001) is False
+
+
+async def test_application_acceptance_updates_main_panel_embed(
+    bot_instance: BloxBerryBot,
+) -> None:
+    """4. Application acceptance updates the main panel embed."""
+    guild = make_guild(settings=bot_instance.settings)
+    panel_msg = MagicMock(spec=discord.Message)
+    panel_msg.guild = guild
+    panel_msg.embeds = [build_main_recruitment_embed(guild, bot_instance.settings)]
+    panel_msg.components = [
+        SimpleNamespace(children=[SimpleNamespace(custom_id="bb_all_main_apply")])
+    ]
+
+    async def _edit(**kwargs: object) -> MagicMock:
+        panel_msg.embeds = [kwargs["embed"]]  # type: ignore[list-item]
+        return panel_msg
+
+    panel_msg.edit = AsyncMock(side_effect=_edit)
+    bot_instance.panel_service.main_panel_message = panel_msg
+
+    applicant = make_member(3050, name="main_applicant")
+    guild.members.append(applicant)
+    guild._members_by_id[applicant.id] = applicant
+
+    # Record main application for Creative Director
+    role_id = bot_instance.settings.roles.main_roles["Creative Director"]
+    applicant.add_roles = AsyncMock(side_effect=lambda *roles, **kw: applicant.roles.extend(roles))
+    applicant.remove_roles = AsyncMock()
+
+    bot_instance.state_store.set_application(
+        3050,
+        {
+            "status": "pending",
+            "type": "main",
+            "role_names": ["Creative Director"],
+            "role_ids": [role_id],
+            "review_message_id": 99991,
+        },
+    )
+
+    review_msg = MagicMock(spec=discord.Message)
+    review_msg.id = 99991
+    review_msg.embeds = [
+        discord.Embed(title="app").set_footer(text="Recruitment Application ID: 3050")
+    ]
+    review_msg.edit = AsyncMock()
+
+    reviewer = make_member(1001, administrator=True)
+    review_interaction = make_interaction(
+        client=bot_instance, user=reviewer, guild=guild, message=review_msg
+    )
+
+    await bot_instance.recruitment_service.finalize_application(
+        review_interaction, "accept", ApplicationReviewedView
+    )
+    await asyncio.sleep(0.25)
+
+    assert panel_msg.edit.await_count == 1
+    assert "Creative Director** — `1/2` seats filled" in panel_msg.embeds[0].description
+
+    await bot_instance.panel_service.shutdown()
+
+
+async def test_application_rejection_does_not_change_seats(
+    bot_instance: BloxBerryBot,
+) -> None:
+    """5. Application rejection leaves actual seats unchanged."""
+    guild = make_guild(settings=bot_instance.settings)
+    panel_msg = MagicMock(spec=discord.Message)
+    panel_msg.guild = guild
+    panel_msg.embeds = [build_main_recruitment_embed(guild, bot_instance.settings)]
+    panel_msg.edit = AsyncMock()
+    bot_instance.panel_service.main_panel_message = panel_msg
+
+    applicant = make_member(3060, name="denied_applicant")
+    guild.members.append(applicant)
+    applicant.remove_roles = AsyncMock()
+
+    role_id = bot_instance.settings.roles.main_roles["Marketing Team"]
+    bot_instance.state_store.set_application(
+        3060,
+        {
+            "status": "pending",
+            "type": "main",
+            "role_names": ["Marketing Team"],
+            "role_ids": [role_id],
+            "review_message_id": 99992,
+        },
+    )
+
+    review_msg = MagicMock(spec=discord.Message)
+    review_msg.id = 99992
+    review_msg.embeds = [
+        discord.Embed(title="app").set_footer(text="Recruitment Application ID: 3060")
+    ]
+    review_msg.edit = AsyncMock()
+
+    reviewer = make_member(1001, administrator=True)
+    review_interaction = make_interaction(
+        client=bot_instance, user=reviewer, guild=guild, message=review_msg
+    )
+
+    await bot_instance.recruitment_service.finalize_application(
+        review_interaction, "deny", ApplicationReviewedView
+    )
+    await asyncio.sleep(0.25)
+
+    panel_msg.edit.assert_not_awaited()
+    await bot_instance.panel_service.shutdown()
 
 
 async def test_submit_application_rolls_back_pending_role_if_review_send_fails(

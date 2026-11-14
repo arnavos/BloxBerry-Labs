@@ -94,3 +94,32 @@ async def test_member_update_and_remove_only_refresh_for_main_roles(
 
     await cog.on_member_remove(after_main)
     bot_instance.panel_service.schedule_main_panel_refresh.assert_called_once()
+
+
+async def test_member_join_and_leave_with_main_role_triggers_panel_refresh(
+    bot_instance: BloxBerryBot,
+) -> None:
+    """6. Member joining and leaving with main role triggers synchronization."""
+    cog = MemberEventsCog(bot_instance)
+    guild = make_guild(member_count=50, settings=bot_instance.settings)
+    bot_instance.panel_service.schedule_main_panel_refresh = MagicMock()  # type: ignore[method-assign]
+
+    welcome_ch = make_text_channel(
+        bot_instance.settings.channels.welcome,
+        name="welcome",
+        guild=guild,
+    )
+    guild._channels_by_id[welcome_ch.id] = welcome_ch
+
+    art_role = guild.get_role(MAIN_ROLES["Art Director"])
+    rejoining_member = make_member(8099, roles=[art_role])
+    rejoining_member.guild = guild
+
+    # Member joins with an existing main role (e.g. persistent role bot)
+    await cog.on_member_join(rejoining_member)
+    bot_instance.panel_service.schedule_main_panel_refresh.assert_called_once()
+
+    # Member leaves with main role
+    bot_instance.panel_service.schedule_main_panel_refresh.reset_mock()
+    await cog.on_member_remove(rejoining_member)
+    bot_instance.panel_service.schedule_main_panel_refresh.assert_called_once()

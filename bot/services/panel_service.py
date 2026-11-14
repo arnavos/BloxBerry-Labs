@@ -207,6 +207,7 @@ class PanelService:
         self._setup_lock = asyncio.Lock()
         self._refresh_task: asyncio.Task[None] | None = None
         self._refresh_pending: bool = False
+        self._reconciliation_task: asyncio.Task[None] | None = None
 
     async def _find_existing_panel_message(
         self,
@@ -366,7 +367,24 @@ class PanelService:
     ) -> None:
         """Edit the cached main recruitment panel message if seat availability changed."""
         if self.main_panel_message is None:
+            # Attempt to re-discover or fetch the message if channel is known
+            try:
+                channel = await resolve_channel(
+                    self.bot, None, self.settings.channels.main_recruitment
+                )
+                if isinstance(channel, discord.TextChannel):
+                    found = await self._find_existing_panel_message(
+                        channel, "main", self.settings.main_panel_marker
+                    )
+                    if found is not None:
+                        self.main_panel_message = found
+            except Exception as exc:
+                logger.debug("Could not resolve main recruitment channel during refresh: %s", exc)
+                return
+
+        if self.main_panel_message is None:
             return
+
         guild = self.main_panel_message.guild
         if guild is None:
             return
@@ -386,11 +404,60 @@ class PanelService:
         except (discord.HTTPException, discord.RateLimited) as exc:
             log_discord_http_error(logger, "main recruitment panel refresh", exc)
 
+    def start_periodic_reconciliation(
+        self,
+        main_view_factory: Callable[[], discord.ui.View],
+        interval_seconds: float = 300.0,
+    ) -> None:
+        """Start single background task that periodically checks actual server roles."""
+        if self._reconciliation_task is None or self._reconciliation_task.done():
+            self._reconciliation_task = asyncio.create_task(
+                self._run_periodic_reconciliation(main_view_factory, interval_seconds),
+                name="bloxberry-periodic-reconciliation",
+            )
+            self._reconciliation_task.add_done_callback(self._log_reconciliation_task_error)
+
+    @staticmethod
+    def _log_reconciliation_task_error(task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(
+                "Periodic reconciliation task failed: %s: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=exc,
+            )
+
+    async def _run_periodic_reconciliation(
+        self,
+        main_view_factory: Callable[[], discord.ui.View],
+        interval_seconds: float,
+    ) -> None:
+        """Loop periodically and reconcile the main recruitment panel."""
+        while True:
+            try:
+                await asyncio.sleep(interval_seconds)
+                await self.refresh_main_panel(main_view_factory)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning(
+                    "Error in periodic reconciliation cycle: %s: %s", type(exc).__name__, exc
+                )
+
     async def shutdown(self) -> None:
-        """Cancel and await any pending debounced refresh task during shutdown."""
+        """Cancel and await any pending debounced refresh and reconciliation tasks during shutdown."""
         self._refresh_pending = False
         if self._refresh_task is not None and not self._refresh_task.done():
             self._refresh_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
         self._refresh_task = None
+
+        if self._reconciliation_task is not None and not self._reconciliation_task.done():
+            self._reconciliation_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reconciliation_task
+        self._reconciliation_task = None

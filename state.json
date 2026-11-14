@@ -1,0 +1,22 @@
+{
+  "applications": {
+    "3050": {
+      "status": "accept",
+      "type": "main",
+      "role_names": [
+        "Creative Director"
+      ],
+      "role_ids": [
+        1571063896977055855
+      ],
+      "review_message_id": 99991,
+      "reviewed_by": 1001,
+      "reviewed_at": "2026-11-14T16:58:11.150679+00:00"
+    }
+  },
+  "tickets": {},
+  "meta": {
+    "panel_messages": {},
+    "command_sync_hash": null
+  }
+}

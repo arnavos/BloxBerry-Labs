@@ -26,7 +26,7 @@ class MemberEventsCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
-        """Assign the automatic member role and post a welcome message with member number."""
+        """Assign the automatic member role, post welcome message, and check role availability."""
         logger.info(
             "[WELCOME] member_join received: %s (%s) in %s (%s)",
             member,
@@ -36,6 +36,11 @@ class MemberEventsCog(commands.Cog):
         )
 
         settings = self.bot.settings
+
+        # Check if the joining member holds any main recruitment roles (e.g. rejoining or bot persistence)
+        member_role_ids = {role.id for role in member.roles}
+        if member_role_ids.intersection(settings.roles.main_roles.values()):
+            self.bot.panel_service.schedule_main_panel_refresh(MainPanelView)
         role = member.guild.get_role(settings.roles.auto_member)
         if role is None:
             logger.warning(

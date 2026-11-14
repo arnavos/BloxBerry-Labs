@@ -142,6 +142,166 @@ async def test_debounced_panel_refresh_coalesces_bursts_and_edits_only_on_change
     await bot_instance.panel_service.shutdown()
 
 
+async def test_startup_synchronization_corrects_outdated_embed(
+    bot_instance: BloxBerryBot,
+) -> None:
+    """1. Correct seat counts on startup: ensures actual member roles update the embed on start."""
+    guild = make_guild(settings=bot_instance.settings)
+    bot_user = SimpleNamespace(id=9000001)
+    bot_instance._connection.user = bot_user  # type: ignore[assignment]
+
+    main_ch = make_text_channel(bot_instance.settings.channels.main_recruitment, guild=guild)
+    skill_ch = make_text_channel(bot_instance.settings.channels.skill_recruitment, guild=guild)
+    ticket_ch = make_text_channel(bot_instance.settings.channels.ticket_panel, guild=guild)
+
+    # 1 member manually holds Technical Director in guild
+    tech_role = guild.get_role(MAIN_ROLES["Technical Director"])
+    human = make_member(9020, roles=[tech_role])
+    # Also add a bot holding the role - bots must NOT be counted
+    bot_member = make_member(9021, roles=[tech_role], bot=True)
+    guild.members.extend([human, bot_member])
+
+    # Outdated existing panel showing 0 seats filled
+    empty_guild = make_guild(settings=bot_instance.settings)
+    outdated_embed = build_main_recruitment_embed(empty_guild, bot_instance.settings)
+    main_msg = MagicMock(spec=discord.Message)
+    main_msg.id = 12001
+    main_msg.author = bot_user
+    main_msg.guild = guild
+    main_msg.embeds = [outdated_embed]
+    main_msg.components = _components_for_view(MainPanelView())
+
+    async def _edit(**kwargs: object) -> MagicMock:
+        main_msg.embeds = [kwargs["embed"]]  # type: ignore[list-item]
+        return main_msg
+
+    main_msg.edit = AsyncMock(side_effect=_edit)
+    main_ch.fetch_message = AsyncMock(return_value=main_msg)
+    main_ch.send = AsyncMock()
+    bot_instance.state_store.set_panel_message_id("main", main_msg.id)
+
+    channels_map = {main_ch.id: main_ch, skill_ch.id: skill_ch, ticket_ch.id: ticket_ch}
+    bot_instance.get_channel = MagicMock(side_effect=lambda cid: channels_map.get(cid))  # type: ignore[method-assign]
+
+    # Run on_ready panel setup
+    await bot_instance.on_ready()
+
+    # 8. No duplicate messages are created
+    main_ch.send.assert_not_awaited()
+    # Embed edited to reflect actual member roles (1/2 seats filled, bot ignored)
+    assert main_msg.edit.await_count == 1
+    assert "Technical Director** — `1/2` seats filled" in main_msg.embeds[0].description
+
+    await bot_instance.panel_service.shutdown()
+
+
+async def test_manual_role_assignment_and_removal_updates_embed(
+    bot_instance: BloxBerryBot,
+) -> None:
+    """2 & 3. Manual role assignment and removal update the embed."""
+    guild = make_guild(settings=bot_instance.settings)
+    main_view = MainPanelView()
+    panel_msg = MagicMock(spec=discord.Message)
+    panel_msg.guild = guild
+    panel_msg.embeds = [build_main_recruitment_embed(guild, bot_instance.settings)]
+    panel_msg.components = _components_for_view(main_view)
+
+    async def _edit(**kwargs: object) -> MagicMock:
+        panel_msg.embeds = [kwargs["embed"]]  # type: ignore[list-item]
+        return panel_msg
+
+    panel_msg.edit = AsyncMock(side_effect=_edit)
+    bot_instance.panel_service.main_panel_message = panel_msg
+
+    # 2. Administrator manually assigns Technical Director to a member
+    tech_role = guild.get_role(MAIN_ROLES["Technical Director"])
+    member = make_member(9030, roles=[])
+    guild.members.append(member)
+
+    # Simulate manual assignment via on_member_update
+    from bot.events.member_events import MemberEventsCog
+
+    cog = MemberEventsCog(bot_instance)
+    before_member = make_member(9030, roles=[])
+    updated_member = make_member(9030, roles=[tech_role])
+    member.roles.append(tech_role)
+
+    await cog.on_member_update(before_member, updated_member)
+    await asyncio.sleep(0.25)
+
+    assert panel_msg.edit.await_count == 1
+    assert "Technical Director** — `1/2` seats filled" in panel_msg.embeds[0].description
+
+    # 9. No unnecessary message edits occur when nothing has changed
+    await bot_instance.panel_service.refresh_main_panel(MainPanelView)
+    assert panel_msg.edit.await_count == 1
+
+    # 3. Administrator manually removes Technical Director
+    panel_msg.edit.reset_mock()
+    member.roles.remove(tech_role)
+    no_role_member = make_member(9030, roles=[])
+    await cog.on_member_update(updated_member, no_role_member)
+    await asyncio.sleep(0.25)
+
+    assert panel_msg.edit.await_count == 1
+    assert "Technical Director** — `0/2` seats filled" in panel_msg.embeds[0].description
+
+    await bot_instance.panel_service.shutdown()
+
+
+async def test_periodic_reconciliation_corrects_outdated_embed_and_avoids_duplicate_tasks(
+    bot_instance: BloxBerryBot,
+) -> None:
+    """7 & 11. Periodic reconciliation corrects embed and only one task runs across repeated on_ready."""
+    guild = make_guild(settings=bot_instance.settings)
+    main_view = MainPanelView()
+    panel_msg = MagicMock(spec=discord.Message)
+    panel_msg.guild = guild
+
+    # Intentionally start with an outdated embed (showing 0 seats)
+    panel_msg.embeds = [build_main_recruitment_embed(guild, bot_instance.settings)]
+    panel_msg.components = _components_for_view(main_view)
+
+    async def _edit(**kwargs: object) -> MagicMock:
+        panel_msg.embeds = [kwargs["embed"]]  # type: ignore[list-item]
+        return panel_msg
+
+    panel_msg.edit = AsyncMock(side_effect=_edit)
+    bot_instance.panel_service.main_panel_message = panel_msg
+    bot_instance.panel_service.panels_ready = True
+
+    # Manually add a member with Game Design Lead outside bot awareness
+    gdl_role = guild.get_role(MAIN_ROLES["Game Design Lead"])
+    member = make_member(9040, roles=[gdl_role])
+    guild.members.append(member)
+
+    # 11. Start periodic reconciliation twice (e.g. repeated on_ready)
+    bot_instance.panel_service.start_periodic_reconciliation(MainPanelView, interval_seconds=0.05)
+    first_task = bot_instance.panel_service._reconciliation_task
+    assert first_task is not None
+
+    bot_instance.panel_service.start_periodic_reconciliation(MainPanelView, interval_seconds=0.05)
+    second_task = bot_instance.panel_service._reconciliation_task
+    assert first_task is second_task  # Only one task exists
+
+    # Wait for periodic cycle to trigger reconciliation
+    await asyncio.sleep(0.12)
+    assert panel_msg.edit.await_count >= 1
+    assert "Game Design Lead** — `1/2` seats filled" in panel_msg.embeds[0].description
+
+    # 10. Failed Discord API requests are handled without crashing
+    resp = MagicMock()
+    resp.status = 429
+    resp.reason = "Rate Limited"
+    resp.headers = {"Retry-After": "5"}
+    panel_msg.edit = AsyncMock(side_effect=discord.HTTPException(resp, "429"))
+    # Reconciliation cycle runs without unhandled exception
+    await bot_instance.panel_service.refresh_main_panel(MainPanelView)
+
+    await bot_instance.panel_service.shutdown()
+    assert bot_instance.panel_service._reconciliation_task is None
+
+
 async def test_ensure_all_panels_failure_keeps_panels_ready_false(
     bot_instance: BloxBerryBot,
 ) -> None:

@@ -171,6 +171,10 @@ class BloxBerryBot(commands.Bot):
         )
 
         if self.panel_service.panels_ready:
+            # Even if panels were previously marked ready (e.g. reconnect),
+            # synchronize the main panel with actual guild member roles.
+            await self.panel_service.refresh_main_panel(MainPanelView)
+            self.panel_service.start_periodic_reconciliation(MainPanelView)
             return
 
         # Existing welcome embed is deliberately NOT posted or edited.
@@ -181,6 +185,7 @@ class BloxBerryBot(commands.Bot):
         )
         if ok:
             logger.info("BloxBerry Labs all-in-one bot is ready.")
+            self.panel_service.start_periodic_reconciliation(MainPanelView)
         else:
             logger.warning(
                 "Bot connected, but panel setup encountered an error and will retry on next ready event."
