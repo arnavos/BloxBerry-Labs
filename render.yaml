@@ -1,10 +1,11 @@
 services:
-  - type: worker
+  - type: web
     name: bloxberry-labs-bot
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.12"
@@ -26,10 +27,3 @@ services:
         value: "900"
       - key: INSTANCE_LOCK_FILE
         value: /tmp/bloxberry_bot.lock
-    # Optional persistent disk (recommended so panel message IDs, ticket counters,
-    # and the slash-command sync hash survive redeploys; requires paid plan):
-    # disk:
-    #   name: bloxberry-data
-    #   mountPath: /var/data
-    #   sizeGB: 1
-    # If you attach the disk above, also update DATA_FILE to /var/data/bloxberry_data.json

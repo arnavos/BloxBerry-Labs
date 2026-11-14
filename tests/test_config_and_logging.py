@@ -66,6 +66,7 @@ def test_load_settings_defaults_and_overrides() -> None:
     assert defaults.sync_commands_mode == "auto"
     assert defaults.discord_guild_id is None
     assert defaults.max_ratelimit_timeout == 60.0
+    assert defaults.http_port == 10000
 
     custom = load_settings(
         {
@@ -79,6 +80,7 @@ def test_load_settings_defaults_and_overrides() -> None:
             "RETRY_BASE_DELAY_SECONDS": "30",
             "RETRY_MAX_DELAY_SECONDS": "600",
             "INSTANCE_LOCK_FILE": "off",
+            "PORT": "8080",
         }
     )
     assert custom.discord_token == "my-token"
@@ -88,6 +90,7 @@ def test_load_settings_defaults_and_overrides() -> None:
     assert custom.discord_guild_id == 123456789
     assert custom.panel_refresh_debounce_seconds == 3.0
     assert custom.max_ratelimit_timeout is None
+    assert custom.http_port == 8080
     assert custom.retry_base_delay_seconds == 30.0
     assert custom.retry_max_delay_seconds == 600.0
     assert custom.instance_lock_file is None
@@ -101,6 +104,9 @@ def test_load_settings_defaults_and_overrides() -> None:
         {"DISCORD_GUILD_ID": "-5"},
         {"MAX_RATELIMIT_TIMEOUT": "10"},
         {"RETRY_BASE_DELAY_SECONDS": "100", "RETRY_MAX_DELAY_SECONDS": "50"},
+        {"PORT": "not-a-number"},
+        {"PORT": "-1"},
+        {"PORT": "70000"},
     ],
 )
 def test_load_settings_validation_errors(env: dict[str, str]) -> None:

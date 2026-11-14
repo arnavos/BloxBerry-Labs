@@ -210,6 +210,7 @@ class Settings:
     retry_base_delay_seconds: float = 60.0
     retry_max_delay_seconds: float = 900.0
     instance_lock_file: Path | None = None
+    http_port: int = 10000
     color: int = COLOR
     main_panel_marker: str = MAIN_PANEL_MARKER
     skill_panel_marker: str = SKILL_PANEL_MARKER
@@ -290,6 +291,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         None if lock_raw.lower() in {"", "none", "off", "false"} else Path(lock_raw)
     )
 
+    port_raw = source.get("PORT", "10000").strip()
+    try:
+        http_port = int(port_raw) if port_raw else 10000
+        if http_port < 0 or http_port > 65535:
+            raise ValueError(f"PORT must be between 0 and 65535, got {http_port}")
+    except ValueError as exc:
+        raise ValueError(f"PORT must be a valid integer, got {port_raw!r}") from exc
+
     return Settings(
         discord_token=token,
         data_file=Path(data_file_raw),
@@ -301,4 +310,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         retry_base_delay_seconds=retry_base,
         retry_max_delay_seconds=retry_max,
         instance_lock_file=instance_lock_file,
+        http_port=http_port,
     )

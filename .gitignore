@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Environment variables & secrets
 .env
 .env.*
@@ -20,3 +21,10 @@ bloxberry_data.json
 bloxberry_data.json.tmp
 *.lock
 .bloxberry_bot.lock
+=======
+.env
+__pycache__/
+*.pyc
+bloxberry_data.json
+bloxberry_data.json.tmp
+>>>>>>> origin/main

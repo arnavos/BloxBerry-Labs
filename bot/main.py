@@ -14,6 +14,7 @@ from typing import Any
 
 import aiohttp
 import discord
+from aiohttp import web
 
 from bot.client import BloxBerryBot
 from bot.config import Settings, load_settings
@@ -115,12 +116,62 @@ def _install_signal_handlers(
     return installed
 
 
+async def create_health_app(
+    bot_getter: Callable[[], BloxBerryBot | None],
+) -> web.Application:
+    """Create aiohttp web application for Render health checks."""
+    app = web.Application()
+
+    async def health_handler(_request: web.Request) -> web.Response:
+        bot = bot_getter()
+        discord_connected = bot is not None and not bot.is_closed()
+        discord_ready = discord_connected and getattr(bot, "is_ready", lambda: False)()
+
+        data = {
+            "status": "ok",
+            "service": "bloxberry-bot",
+            "discord": {
+                "connected": discord_connected,
+                "ready": bool(discord_ready),
+                "user": str(bot.user) if bot and bot.user else None,
+            },
+        }
+        return web.json_response(data, status=200)
+
+    app.router.add_get("/", health_handler)
+    app.router.add_get("/health", health_handler)
+    return app
+
+
+async def start_health_server(
+    settings: Settings,
+    bot_getter: Callable[[], BloxBerryBot | None],
+) -> web.AppRunner | None:
+    """Start the asynchronous health server on 0.0.0.0:$PORT without blocking."""
+    app = await create_health_app(bot_getter)
+    runner = web.AppRunner(app, access_log=None)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", settings.http_port)
+    try:
+        await site.start()
+        logger.info(
+            "[HTTP] Health server started on 0.0.0.0:%d (endpoints: / and /health).",
+            settings.http_port,
+        )
+        return runner
+    except Exception as exc:
+        logger.error("[HTTP] Failed to start health server on port %d: %s", settings.http_port, exc)
+        await runner.cleanup()
+        return None
+
+
 async def run_bot_with_backoff(
     settings: Settings,
     *,
     bot_factory: Callable[[Settings, StateStore], BloxBerryBot] | None = None,
     sleep_fn: Callable[[float], Awaitable[Any]] = asyncio.sleep,
     install_signals: bool = True,
+    start_http: bool = True,
 ) -> int:
     """Run the Discord bot as a resilient worker with rate-limit and transient retry handling."""
     if not settings.discord_token:
@@ -147,6 +198,13 @@ async def run_bot_with_backoff(
             task.add_done_callback(close_tasks.discard)
 
     installed_signals = _install_signal_handlers(loop, request_shutdown) if install_signals else []
+
+    http_runner: web.AppRunner | None = None
+    if start_http:
+        try:
+            http_runner = await start_health_server(settings, lambda: active_bot)
+        except Exception as exc:
+            logger.error("[HTTP] Unexpected error starting health server: %s", exc)
 
     delay_seconds = settings.retry_base_delay_seconds
 
@@ -248,6 +306,11 @@ async def run_bot_with_backoff(
         for sig in installed_signals:
             with suppress(NotImplementedError, RuntimeError):
                 loop.remove_signal_handler(sig)
+
+        if http_runner is not None:
+            logger.info("[HTTP] Shutting down health server...")
+            with suppress(Exception):
+                await http_runner.cleanup()
 
     logger.info("[LIFECYCLE] BloxBerry Labs bot stopped cleanly.")
     return 0
