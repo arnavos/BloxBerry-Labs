@@ -61,7 +61,7 @@ SEAT_LIMITS = {
     "Executive Manager": 1,
     "Project Manager": 2,
     "Technical Director": 2,
-    "Creative Director": 1,
+    "Creative Director": 2,
     "Game Design Lead": 2,
     "Art Director": 1,
     "Community Director": 1,
