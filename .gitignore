@@ -1,0 +1,22 @@
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime state & single-instance lock files
+bloxberry_data.json
+bloxberry_data.json.tmp
+*.lock
+.bloxberry_bot.lock

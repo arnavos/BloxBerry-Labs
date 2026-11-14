@@ -1,0 +1,35 @@
+services:
+  - type: worker
+    name: bloxberry-labs-bot
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.12"
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DATA_FILE
+        value: bloxberry_data.json
+      - key: LOG_LEVEL
+        value: INFO
+      - key: SYNC_COMMANDS_MODE
+        value: auto
+      - key: PANEL_REFRESH_DEBOUNCE_SECONDS
+        value: "2.5"
+      - key: MAX_RATELIMIT_TIMEOUT
+        value: "60.0"
+      - key: RETRY_BASE_DELAY_SECONDS
+        value: "60"
+      - key: RETRY_MAX_DELAY_SECONDS
+        value: "900"
+      - key: INSTANCE_LOCK_FILE
+        value: /tmp/bloxberry_bot.lock
+    # Optional persistent disk (recommended so panel message IDs, ticket counters,
+    # and the slash-command sync hash survive redeploys; requires paid plan):
+    # disk:
+    #   name: bloxberry-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    # If you attach the disk above, also update DATA_FILE to /var/data/bloxberry_data.json
